@@ -13,8 +13,6 @@ int64_t hook(uint32_t r)
     if (!is_invoke && !is_payment)
         DONE("Sem: passing non-invoke, non-payment txn.");
 
-    // first check if this is a signal from the signal account
-
     uint8_t hookacc[20], otxnacc[20], sigacc[20];
     hook_account(SBUF(hookacc));
     otxn_field(SBUF(otxnacc), sfAccount);
@@ -31,7 +29,6 @@ int64_t hook(uint32_t r)
             DONE("Sem: passing outgoing non-invoke txn.");
 
         // use invoke to set signalling account
-
         if (otxn_param(SBUF(sigacc), "SIGACC", 6) != 20)
             NOPE("Sem: self ttINVOKE did not contain SIGACC parameter.");
     
