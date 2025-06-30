@@ -143,7 +143,7 @@ int64_t hook(uint32_t r)
             if (semaphore)
                 DONE("Sem: incoming payments are now BLOCKED.");
 
-            DONE("Sem: incoming payments are not ALLOWED.");
+            DONE("Sem: incoming payments are now ALLOWED.");
         }
         
         DONE("Sem: passing ttINVOKE from non-signal account."); 
