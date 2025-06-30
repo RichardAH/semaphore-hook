@@ -1,3 +1,33 @@
+/**
+ * Semaphore Hook
+ *
+ * Description:
+ * Allows a signalling account to block or allow incoming payments to the account.
+ *
+ * Setup: Self ttINVOKE with the following parameters:
+ *
+ *        SEMAMT (8 byte little endian uint) is the threshold below which the account 
+ *        will not accept incoming payments. If omitted then it is deemed to be 1.
+ *      
+ *        SEMACC (20 byte accid) is the signalling account allowed to send ttINVOKE signals.
+ *
+ * Usage: The signalling account will periodically send a ttINVOKE containing parameter:
+ *
+ *        BAL (8 byte little endian uint)
+ *
+ *        If BAL is equal to or above the SEMAMT then the Hook passes allows incoming ttPAYMENT
+ *        transactions. If BAL is less than SEMAMT then the Hook disallows incoming ttPAYMENT
+ *        transactions.
+ *
+ *        The allow/disallow state continues as toggled until a new txn changes it.
+ *
+ * Comment:
+ *        Remit is not monitored and can be used to refill the Hook accounts XAH as needed.
+ *
+ * Author: Richard Holland
+ * Date: 2025/6/30
+ */
+
 #include <stdint.h>
 #include "hookapi.h"
 #define SVAR(x) &x, sizeof(x)
@@ -21,9 +51,19 @@ int64_t hook(uint32_t r)
     
     uint8_t semaphore = 0;
     state(SVAR(semaphore), "SEM", 3);
-    uint64_t semamt = 0;
-    uint64_t has_amt = (state(SVAR(semamt), "SEMAMT", 6) == 8);
+
+    uint64_t semamt = 1;    
     uint64_t is_setup = (state(SBUF(sigacc), "SEMACC", 6) == 20);
+       
+    int64_t ret = state(SVAR(semamt), "SEMAMT", 6);
+    if (ret < 0 || ret == 8)
+    {
+        // the amount can either be unset or set correctly
+    }
+    else
+    {
+        is_setup = 0;
+    }
 
     if (BUFFER_EQUAL_20(hookacc, otxnacc))
     {    
@@ -33,7 +73,8 @@ int64_t hook(uint32_t r)
 
         // use invoke to set signalling account
 
-        uint64_t params_set = 0;
+        uint64_t accset = 0, amtset = 0;
+        
 
         int64_t ret = otxn_param(SBUF(sigacc), "SEMACC", 6);
         if (ret == 20)
@@ -42,67 +83,60 @@ int64_t hook(uint32_t r)
             if (state_set(SBUF(sigacc), "SEMACC", 6) != 20)
                 NOPE("Sem: could not set SEMACC hook state.");
 
-            params_set++;
+            accset = 1;
         }
         else if (ret > 0)
             NOPE("Sem: specified SEMACC but wrong size, expecting 20 bytes.");
         
-        uint64_t sigamt = 0;
-        ret = otxn_param(SVAR(sigamt), "SEMAMT", 6);
+        uint64_t semamt = 0;
+        ret = otxn_param(SVAR(semamt), "SEMAMT", 6);
         if (ret == 8)
         {
-            if (state_set(SVAR(sigamt), "SEMAMT", 6) != 8)
+            if (state_set(SVAR(semamt), "SEMAMT", 6) != 8)
                 NOPE("Sem: could not set SEMAMT hook state.");
-            
-            params_set++;
+        
+            amtset = 1;    
         }
         else if (ret > 0)
             NOPE("Sem: specified SEMAMT but wrong size, expecting 8 bytes LE int");
 
-        if (params_set > 0)
+        if (accset && amtset)
         {
-            DONE("Sem: param(s) set.");
+            DONE("Sem: both SEMACC and SEMAMT have been updated.");
+        }
+        else if (accset)
+        {
+            DONE("Sem: SEMACC has been updated.");
+        }
+        else if (amtset)
+        {
+            DONE("Sem: SEMAMT has been updated.");
         }
         else
         {
-            NOPE("Sem: specify either or both of SEMACC (20 bytes) and SEMAMT (8 bytes le uint).");
+            NOPE("Sem: specify SEMACC (20 bytes) and/or SEMAMT (8 bytes le uint) to update values.");
         }
     }
 
     if (!is_setup)
-        NOPE("Sem: send a self ttINVOKE with SEMACC to setup hook.");
+        NOPE("Sem: send a self ttINVOKE with SEMACC (and optionally SEMAMT) to setup hook.");
 
     if (is_invoke)
     {
         // check if the invoke is from the signalling account
+        uint8_t dummy;
+        uint64_t bal;
+        uint64_t has_bal = (otxn_param(SVAR(bal), "BAL", 3) == 8);
+
         if (BUFFER_EQUAL_20(otxnacc, sigacc))
         {
-            uint8_t dummy;
-            uint64_t bal;
-            uint64_t has_bal = (otxn_param(SVAR(bal), "BAL", 3) == 8);
+            if (!has_bal)
+                NOPE("Sem: missing correctly formatted BAL param on signalling account invoke (8 byte int LE).");
 
-            if (otxn_param(SVAR(dummy), "BLOCK", 5) > 0)
-                semaphore = 1;
-            else if (otxn_param(SVAR(dummy), "ALLOW", 5) > 0)
-                semaphore = 0;
-            else if (has_bal)
-            {
-                if (!has_amt)
-                    semaphore = 0;
-                else
-                {
-                    // flip sem based on balance threshold
-                    semaphore = !(bal < semamt);
-                } 
-            }
-            else
-            {
-                // blank invoke flips the semaphore
-                semaphore++;
-                semaphore %= 2;
-            }
+                
             
-
+            semaphore = (bal < semamt);
+            
             if (state_set(SVAR(semaphore), "SEM", 3) < 0)
                 NOPE("Sem: could not set new semaphore value.");
 
